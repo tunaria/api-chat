@@ -22,6 +22,7 @@
   .sub::before { content: 'subagent'; display: block; font-size: 0.75em; opacity: 0.6; color: var(--vscode-textLink-foreground); }
   .sys { font-size: 0.85em; opacity: 0.7; font-style: italic; }
   .err { color: var(--vscode-errorForeground); font-size: 0.85em; }
+  #status { padding: 4px 8px; font-size: 0.85em; background: var(--vscode-statusBarItem-prominentBackground, var(--vscode-button-background)); color: var(--vscode-statusBarItem-prominentForeground, var(--vscode-button-foreground)); }
   #asks { max-height: 45vh; overflow-y: auto; padding: 0 8px; }
   #asks:empty { display: none; }
   #asks .m { background: var(--vscode-editorWidget-background, var(--vscode-input-background)); }
@@ -73,6 +74,7 @@
   <textarea id="ctx" placeholder="Added to the system prompt for every run in this folder"></textarea>
 </details>
 <div id="log"></div>
+<div id="status" hidden></div>
 <div id="asks"></div>
 <div id="in">
   <textarea id="text" placeholder="Prompt (Ctrl+Enter to send)"></textarea>
@@ -139,7 +141,15 @@
   $('stop').onclick = () => vs.postMessage({ type: 'stop' });
   $('new').onclick = () => vs.postMessage({ type: 'new' });
   $('text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey) send(); });
+  let runStart = 0, lastAct = 0, tick = null;
+  const fmt = (ms) => { const t = Math.floor(ms / 1000); return Math.floor(t / 60) + 'm ' + String(t % 60).padStart(2, '0') + 's'; };
+  function status() {
+    const now = Date.now(), waiting = $('asks').children.length;
+    $('status').textContent = (waiting ? '⏸ Waiting for your answer (' + waiting + ')' : '● Running') + ' · ' + fmt(now - runStart) + ' · last activity ' + fmt(now - lastAct) + ' ago';
+  }
   window.addEventListener('message', ({ data: m }) => {
+    lastAct = Date.now();
+    if (m.type === 'busy') { if (m.on) { runStart = lastAct; $('status').hidden = false; clearInterval(tick); tick = setInterval(status, 1000); status(); } else { clearInterval(tick); $('status').hidden = true; } }
     if (m.type === 'init') {
       const p = m.prefs;
       $('model').value = p.model; $('effort').value = p.effort; $('mode').value = p.mode;
