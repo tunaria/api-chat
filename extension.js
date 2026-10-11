@@ -205,7 +205,10 @@ function openPanel(ctx) {
       '--mcp-config', mcpFile, '--permission-prompt-tool', 'mcp__apichat__approve'];
     if (EFFORTS.has(m.effort)) args.push('--effort', m.effort);
     if (m.autoReads) args.push('--allowedTools', READ_TOOLS.join(','));
-    const context = ctxFor(m.cwd).trim();
+    const READ_HINT = 'Reading files is pre-approved only through the Read, Glob and Grep tools. Use them for every '
+      + 'look at files or folders (listing, viewing, searching), including in subagents. Do not use Bash or PowerShell '
+      + 'for ls, cat, head, find, grep, dir or Get-Content: each shell command needs the person to approve it.';
+    const context = [m.autoReads ? READ_HINT : '', ctxFor(m.cwd).trim()].filter(Boolean).join(String.fromCharCode(10, 10));
     if (context) args.push('--append-system-prompt', context);
     for (const d of String(m.extraDirs || '').split(';').map((x) => x.trim()).filter(Boolean)) args.push('--add-dir', d);
     if (sessionId) args.push('--resume', sessionId);
