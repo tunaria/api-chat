@@ -262,7 +262,9 @@ function openPanel(ctx) {
     if (context) args.push('--append-system-prompt', context);
     for (const d of String(m.extraDirs || '').split(';').map((x) => x.trim()).filter(Boolean)) args.push('--add-dir', d);
     if (sessionId) args.push('--resume', sessionId);
-    const env = { ...process.env, ANTHROPIC_API_KEY: key };
+    // wait for background tasks (subagents, long commands) however long they take: print mode
+    // otherwise exits at its wait ceiling and the run stops partway, wasting what it spent
+    const env = { ...process.env, ANTHROPIC_API_KEY: key, CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0' };
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
     const firstPrompt = m.text, runCwd = m.cwd, runModel = m.model;
     run = { mode: m.mode, autoReads: !!m.autoReads,
