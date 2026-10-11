@@ -15,6 +15,13 @@ const CONVS = 'apiChat.conversations';
 const CTX = 'apiChat.context'; // { [folderPath]: text }
 const READ_TOOLS = ['Read', 'Glob', 'Grep', 'LS', 'TodoWrite'];
 const SHELL = new Set(['Bash', 'PowerShell']);
+const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+// true when p resolves inside one of roots (case-insensitive on Windows, no ".." escapes)
+function insideRoots(p, roots) {
+  const norm = (x) => { const r = path.resolve(x); return process.platform === 'win32' ? r.toLowerCase() : r; };
+  const t = norm(p);
+  return roots.some((r) => { const b = norm(r); return t === b || t.startsWith(b.endsWith(path.sep) ? b : b + path.sep); });
+}
 const CHAIN = /[;&|<>`(){}$@]/;
 const LAUNCHERS = new Set(['bash','sh','zsh','cmd','cmd.exe','powershell','powershell.exe','pwsh','pwsh.exe','node','python','python3','py','perl','ruby','iex','invoke-expression','env','xargs','sudo','start','start-process','wsl','git-bash']);
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -158,6 +165,7 @@ function openPanel(ctx) {
   // Permission bridge: permission-mcp.js POSTs here; the answer comes from the panel's buttons.
   const token = crypto.randomBytes(24).toString('hex');
   const pending = new Map();
+  let run = { mode: 'default', autoReads: false, roots: [] }; // settings of the run in progress
   const alwaysAllow = new Set();   // non-shell tool names approved for this conversation
   let prefixes = new Set();        // shell command prefixes approved for this conversation
   const subTools = new Set(); // tool_use ids issued inside a subagent
@@ -178,6 +186,10 @@ function openPanel(ctx) {
       const isShell = SHELL.has(a.tool_name);
       const cmd = isShell && a.input ? a.input.command : null;
       if (!isShell && alwaysAllow.has(a.tool_name)) return reply('allow');
+      // honor the panel's own settings when the CLI still asks (e.g. a path outside its folders)
+      const fp = a.input && (a.input.file_path || a.input.notebook_path || a.input.path);
+      if (run.autoReads && READ_TOOLS.includes(a.tool_name)) return reply('allow');
+      if (run.mode === 'acceptEdits' && EDIT_TOOLS.has(a.tool_name) && typeof fp === 'string' && insideRoots(fp, run.roots)) return reply('allow');
       if (isShell) for (const p of prefixes) if (prefixMatches(cmd, p)) return reply('allow');
       const prefix = isShell ? shellPrefix(cmd) : null;
       const id = crypto.randomBytes(8).toString('hex');
@@ -253,6 +265,8 @@ function openPanel(ctx) {
     const env = { ...process.env, ANTHROPIC_API_KEY: key };
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
     const firstPrompt = m.text, runCwd = m.cwd, runModel = m.model;
+    run = { mode: m.mode, autoReads: !!m.autoReads,
+      roots: [m.cwd, ...String(m.extraDirs || '').split(';').map((x) => x.trim()).filter(Boolean)] };
     try { proc = cp.spawn(findClaude(), args, { cwd: runCwd, env, windowsHide: true }); }
     catch (e) { proc = null; post({ type: 'err', text: String(e) }); return; }
     proc.stdin.end(m.ultracode ? 'ultracode: ' + m.text : m.text);
