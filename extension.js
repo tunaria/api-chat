@@ -157,7 +157,7 @@ function openPanel(ctx) {
   fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
 
   const denyAll = () => { for (const f of pending.values()) f('deny'); pending.clear(); };
-  const resetConv = () => { sessionId = null; alwaysAllow.clear(); prefixes = new Set(); subTools.clear(); };
+  const resetConv = () => { sessionId = null; panel.title = 'API Chat'; alwaysAllow.clear(); prefixes = new Set(); subTools.clear(); };
   const busyMsg = () => post({ type: 'sys', text: 'Still running; press Stop first.' });
 
   panel.webview.onDidReceiveMessage(async (m) => {
@@ -180,7 +180,7 @@ function openPanel(ctx) {
       const f = findTranscript(c.cwd, c.id);
       if (!f) post({ type: 'sys', text: 'Transcript not found; the conversation will still resume.' });
       else for (const h of readHistory(f)) post(h);
-      post({ type: 'resumed', cwd: c.cwd, model: c.model, context: ctxFor(c.cwd) });
+      panel.title = 'API Chat: ' + c.title; post({ type: 'resumed', cwd: c.cwd, model: c.model, context: ctxFor(c.cwd) });
       post({ type: 'sys', text: `Resuming "${c.title}"` + (c.cost ? ` · spent so far $${c.cost.toFixed(3)}` : '') });
       sendConvs(); return;
     }
@@ -225,7 +225,7 @@ function openPanel(ctx) {
       const list = convs(); let c = list.find((x) => x.id === sessionId);
       if (!c) { c = { id: sessionId, title: firstPrompt.replace(/\s+/g, ' ').trim().slice(0, 60), cwd: runCwd, model: runModel, updated: Date.now(), cost: 0 }; list.push(c); }
       c.updated = Date.now(); c.model = runModel; c.cost = (c.cost || 0) + (cost || 0); c.prefixes = [...prefixes];
-      saveConvs(list); sendConvs();
+      saveConvs(list); sendConvs(); panel.title = 'API Chat: ' + c.title;
     };
 
     let buf = '', registered = false, runResult = null;
