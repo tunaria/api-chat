@@ -1,41 +1,74 @@
 <!doctype html>
 <html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; display: flex; flex-direction: column; height: 100vh; }
-  #bar { display: flex; gap: 6px; padding: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--vscode-panel-border); }
-  #bar input, #bar select { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 3px; }
-  #cwd { flex: 1; min-width: 12rem; }
-  #log { flex: 1; overflow-y: auto; padding: 8px; }
+  * { box-sizing: border-box; }
+  body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+  .bar { display: flex; gap: 6px; padding: 6px; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--vscode-panel-border); }
+  input, select { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 3px; font-family: inherit; min-width: 0; }
+  select { background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border-color: var(--vscode-dropdown-border, transparent); }
+  input[type=checkbox] { accent-color: var(--vscode-checkbox-background); }
+  label { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 0.9em; }
+  #conv { flex: 1 1 14rem; max-width: 100%; }
+  #cwd, #extra { flex: 1 1 12rem; }
+  details { padding: 0 6px 6px; border-bottom: 1px solid var(--vscode-panel-border); }
+  summary { cursor: pointer; font-size: 0.9em; opacity: 0.8; padding: 4px 0; }
+  #ctx { width: 100%; min-height: 5em; }
+  #log { flex: 1; overflow-y: auto; padding: 8px; overflow-wrap: anywhere; }
   .m { white-space: pre-wrap; margin: 6px 0; padding: 6px 8px; border-radius: 4px; }
   .you { background: var(--vscode-input-background); }
   .tool { font-family: var(--vscode-editor-font-family); font-size: 0.85em; opacity: 0.7; }
-  .sub { border-left: 3px solid var(--vscode-textLink-foreground); padding-left: 8px; }
+  .sub { border-left: 3px solid var(--vscode-textLink-foreground); padding-left: 8px; margin-left: 12px; }
+  .sub::before { content: 'subagent'; display: block; font-size: 0.75em; opacity: 0.6; color: var(--vscode-textLink-foreground); }
   .sys { font-size: 0.85em; opacity: 0.7; font-style: italic; }
   .err { color: var(--vscode-errorForeground); font-size: 0.85em; }
   .ask { border: 1px solid var(--vscode-focusBorder); }
-  .ask pre { white-space: pre-wrap; max-height: 14em; overflow: auto; font-size: 0.85em; }
-  .ask .btns { display: flex; gap: 6px; }
-  #in { display: flex; gap: 6px; padding: 6px; border-top: 1px solid var(--vscode-panel-border); }
-  textarea { flex: 1; min-height: 4em; resize: vertical; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); font-family: inherit; }
-  button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; padding: 4px 10px; cursor: pointer; }
+  .ask pre { white-space: pre-wrap; max-height: 14em; overflow: auto; font-size: 0.85em; font-family: var(--vscode-editor-font-family); }
+  .ask .btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  #in { display: flex; gap: 6px; padding: 6px; border-top: 1px solid var(--vscode-panel-border); flex-wrap: wrap; }
+  textarea { flex: 1 1 14rem; min-height: 4em; resize: vertical; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); font-family: inherit; }
+  button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; padding: 4px 10px; cursor: pointer; font-family: inherit; }
+  button:hover { background: var(--vscode-button-hoverBackground); }
   button.sec { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  button:disabled { opacity: 0.5; }
+  button.sec:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .copy { float: right; font-size: 0.75em; padding: 1px 6px; margin-left: 6px; }
+  button:disabled { opacity: 0.5; cursor: default; }
 </style></head>
 <body>
-<div id="bar">
-  <input id="cwd" title="Working folder">
-  <select id="model">
+<div class="bar">
+  <select id="conv" title="Conversations"><option value="">New conversation</option></select>
+  <button id="del" class="sec" title="Remove this conversation from the list">Delete</button>
+  <button id="new" class="sec">New</button>
+</div>
+<div class="bar">
+  <select id="model" title="Model">
     <option value="claude-opus-5-5">Opus 5.5</option>
-    <option value="claude-sonnet-5-5" selected>Sonnet 5.5</option>
+    <option value="claude-sonnet-5-5">Sonnet 5.5</option>
     <option value="claude-haiku-5-5">Haiku 5.5</option>
   </select>
+  <select id="effort" title="Effort">
+    <option value="low">effort: low</option>
+    <option value="medium">effort: medium</option>
+    <option value="high">effort: high</option>
+    <option value="xhigh">effort: xhigh</option>
+    <option value="max">effort: max</option>
+  </select>
   <select id="mode" title="Permission mode">
-    <option value="default" selected>ask for everything</option>
+    <option value="default">ask for everything</option>
     <option value="acceptEdits">auto-accept file edits</option>
     <option value="plan">plan only</option>
   </select>
-  <button id="new" class="sec">New</button>
+  <label title="Read, Glob, Grep, LS and TodoWrite never prompt. Shell commands always ask."><input type="checkbox" id="autoReads">Auto-allow reads</label>
+  <label title="Prefix the prompt with 'ultracode:' to opt into multi-agent workflows"><input type="checkbox" id="ultracode">Ultracode</label>
 </div>
+<div class="bar">
+  <input id="cwd" title="Working folder" placeholder="Working folder">
+  <input id="extra" title="Extra folders the agent may use (semicolon-separated)" placeholder="Extra folders (a;b)">
+</div>
+<details id="ctxBox">
+  <summary>Context for this folder</summary>
+  <textarea id="ctx" placeholder="Added to the system prompt for every run in this folder"></textarea>
+</details>
 <div id="log"></div>
 <div id="in">
   <textarea id="text" placeholder="Prompt (Ctrl+Enter to send)"></textarea>
@@ -46,30 +79,77 @@
   const $ = (id) => document.getElementById(id);
   const scroll = () => { $('log').scrollTop = 1e9; };
   const add = (cls, text) => { const d = document.createElement('div'); d.className = 'm ' + cls; d.textContent = text; $('log').appendChild(d); scroll(); return d; };
+  function copyBtn(el, text, label) {
+    const b = document.createElement('button'); b.className = 'sec copy'; b.textContent = label || 'Copy';
+    b.onclick = () => {
+      const done = () => { b.textContent = 'Copied'; setTimeout(() => (b.textContent = label || 'Copy'), 1200); };
+      navigator.clipboard.writeText(text).then(done, () => { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('copy'); done(); });
+    };
+    el.prepend(b);
+  }
+  const prefs = () => ({ model: $('model').value, effort: $('effort').value, mode: $('mode').value, autoReads: $('autoReads').checked,
+    ultracode: $('ultracode').checked, cwd: $('cwd').value, extraDirs: $('extra').value });
+  const savePrefs = () => vs.postMessage({ type: 'prefs', prefs: prefs() });
+  for (const id of ['model', 'effort', 'mode', 'autoReads', 'ultracode', 'extra']) $(id).addEventListener('change', savePrefs);
+  $('cwd').addEventListener('change', () => { savePrefs(); vs.postMessage({ type: 'getContext', cwd: $('cwd').value }); });
+  let ctxTimer;
+  const saveCtx = () => { clearTimeout(ctxTimer); vs.postMessage({ type: 'setContext', cwd: $('cwd').value, text: $('ctx').value }); };
+  $('ctx').addEventListener('input', () => { clearTimeout(ctxTimer); ctxTimer = setTimeout(saveCtx, 500); });
+  $('ctx').addEventListener('change', saveCtx);
+  function setCtx(text) { $('ctx').value = text || ''; $('ctxBox').querySelector('summary').textContent = 'Context for this folder' + (text ? ' (set)' : ''); }
+
   function send() {
     const text = $('text').value.trim(); if (!text) return;
+    saveCtx();
     add('you', text); $('text').value = '';
-    vs.postMessage({ type: 'send', text, cwd: $('cwd').value, model: $('model').value, mode: $('mode').value });
+    vs.postMessage(Object.assign({ type: 'send', text }, prefs()));
   }
   function ask(m) {
     const d = add('ask' + (m.sub ? ' sub' : ''), (m.sub ? 'Subagent wants: ' : 'Wants: ') + m.tool);
     const pre = document.createElement('pre'); pre.textContent = m.input; d.appendChild(pre);
     const b = document.createElement('div'); b.className = 'btns'; d.appendChild(b);
-    const answer = (decision) => { vs.postMessage({ type: 'answer', id: m.id, decision }); b.remove(); add('sys', decision + ': ' + m.tool); };
-    for (const [label, dec, cls] of [['Allow', 'allow', ''], ['Always allow ' + m.tool, 'always', 'sec'], ['Deny', 'deny', 'sec']]) {
-      const btn = document.createElement('button'); btn.textContent = label; if (cls) btn.className = cls; btn.onclick = () => answer(dec); b.appendChild(btn);
+    const answer = (decision, label) => { vs.postMessage({ type: 'answer', id: m.id, decision }); b.remove(); add('sys', label + ': ' + m.tool); };
+    const opts = [['Allow', 'allow', '']];
+    if (m.shell) { if (m.prefix) opts.push(['Always allow `' + m.prefix + '`', 'prefix', 'sec']); }
+    else opts.push(['Always allow ' + m.tool, 'always', 'sec']);
+    opts.push(['Deny', 'deny', 'sec']);
+    for (const [label, dec, cls] of opts) {
+      const btn = document.createElement('button'); btn.textContent = label; if (cls) btn.className = cls; btn.onclick = () => answer(dec, label); b.appendChild(btn);
     }
     scroll();
   }
+  function convs(list, current) {
+    const s = $('conv'); s.textContent = '';
+    const o = document.createElement('option'); o.value = ''; o.textContent = 'New conversation'; s.appendChild(o);
+    for (const c of list) {
+      const e = document.createElement('option'); e.value = c.id;
+      e.textContent = (c.title || c.id) + ' · ' + new Date(c.updated).toLocaleString() + (c.cost ? ' · $' + c.cost.toFixed(2) : '');
+      e.title = c.cwd; s.appendChild(e);
+    }
+    s.value = current && list.some((c) => c.id === current) ? current : '';
+  }
+  $('conv').onchange = () => vs.postMessage($('conv').value ? { type: 'pick', id: $('conv').value } : { type: 'new' });
+  $('del').onclick = () => { if ($('conv').value) vs.postMessage({ type: 'delete', id: $('conv').value }); };
   $('send').onclick = send;
   $('stop').onclick = () => vs.postMessage({ type: 'stop' });
   $('new').onclick = () => vs.postMessage({ type: 'new' });
   $('text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey) send(); });
   window.addEventListener('message', ({ data: m }) => {
-    if (m.type === 'init') $('cwd').value = m.cwd;
-    else if (m.type === 'busy') { $('send').disabled = m.on; $('stop').disabled = !m.on; }
+    if (m.type === 'init') {
+      const p = m.prefs;
+      $('model').value = p.model; $('effort').value = p.effort; $('mode').value = p.mode;
+      $('autoReads').checked = !!p.autoReads; $('ultracode').checked = !!p.ultracode;
+      $('cwd').value = p.cwd; $('extra').value = p.extraDirs || ''; setCtx(m.context);
+    }
+    else if (m.type === 'convs') convs(m.list, m.current);
+    else if (m.type === 'context') setCtx(m.text);
+    else if (m.type === 'resumed') { if (m.cwd) $('cwd').value = m.cwd; if (m.model) $('model').value = m.model; setCtx(m.context); savePrefs(); }
+    else if (m.type === 'clear') $('log').textContent = '';
+    else if (m.type === 'busy') { $('send').disabled = m.on; $('stop').disabled = !m.on; $('conv').disabled = m.on; $('new').disabled = m.on; }
     else if (m.type === 'ask') ask(m);
-    else add((m.type === 'text' ? 'bot' : m.type) + (m.sub ? ' sub' : ''), m.text);
+    else if (m.type === 'done') { const d = add('sys', m.text); if (m.final) copyBtn(d, m.final, 'Copy final answer'); }
+    else { const d = add((m.type === 'text' ? 'bot' : m.type) + (m.sub ? ' sub' : ''), m.text); if (m.type === 'text') copyBtn(d, m.text); }
   });
+  vs.postMessage({ type: 'ready' });
 </script>
 </body></html>
