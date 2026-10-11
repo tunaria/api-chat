@@ -1,0 +1,16 @@
+{
+  "name": "api-chat",
+  "displayName": "API Chat (Claude CLI on API key)",
+  "publisher": "tunaria",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.80.0" },
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      { "command": "apiChat.open", "title": "API Chat: Open" },
+      { "command": "apiChat.setKey", "title": "API Chat: Set API Key" },
+      { "command": "apiChat.clearKey", "title": "API Chat: Clear API Key" }
+    ]
+  }
+}
