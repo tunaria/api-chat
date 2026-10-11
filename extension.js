@@ -112,6 +112,44 @@ function openPanel(ctx) {
   const sendConvs = () => post({ type: 'convs', list: convs().slice().sort((a, b) => b.updated - a.updated), current: sessionId });
   const ctxFor = (cwd) => (g.get(CTX, {})[cwd] || '');
 
+  // Pick up print-mode (sdk-cli) sessions the CLI saved on disk that the list doesn't know about,
+  // e.g. runs from before an extension reload. Only reads the first 256 KB of recent transcripts.
+  function importTranscripts() {
+    const root = path.join(os.homedir(), '.claude', 'projects');
+    const known = new Set(convs().map((c) => c.id)), found = [];
+    const cutoff = Date.now() - 30 * 86400000;
+    let dirs = []; try { dirs = fs.readdirSync(root); } catch { return; }
+    for (const d of dirs) {
+      let files = []; try { files = fs.readdirSync(path.join(root, d)); } catch { continue; }
+      for (const f of files) {
+        if (!f.endsWith('.jsonl')) continue;
+        const id = f.slice(0, -6);
+        if (known.has(id)) continue;
+        const fp = path.join(root, d, f);
+        let st; try { st = fs.statSync(fp); } catch { continue; }
+        if (st.mtimeMs < cutoff) continue;
+        let head = '';
+        try { const fd = fs.openSync(fp, 'r'); const b = Buffer.alloc(Math.min(st.size, 262144)); fs.readSync(fd, b, 0, b.length, 0); fs.closeSync(fd); head = b.toString('utf8'); } catch { continue; }
+        if (!head.includes('"entrypoint":"sdk-cli"')) continue;
+        let cwd = '', title = '', model = '';
+        for (const line of head.split('\n')) {
+          let ev; try { ev = JSON.parse(line); } catch { continue; }
+          if (!cwd && ev.cwd) cwd = ev.cwd;
+          if (!model && ev.message && ev.message.model) model = ev.message.model;
+          if (!title && ev.type === 'user' && ev.message) {
+            const c = ev.message.content;
+            const t = typeof c === 'string' ? c : Array.isArray(c) ? (c.find((x) => x.type === 'text') || {}).text : '';
+            if (t) title = t.replace(/^ultracode:\s*/, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+          }
+          if (cwd && title && model) break;
+        }
+        if (title) found.push({ id, title, cwd, model, updated: st.mtimeMs, cost: 0 });
+      }
+    }
+    if (found.length) saveConvs(convs().concat(found));
+  }
+  importTranscripts();
+
   const prefs = Object.assign({ model: 'claude-sonnet-5-5', effort: 'high', mode: 'default', autoReads: true, ultracode: false,
     cwd: ws ? ws[0].uri.fsPath : os.homedir(), extraDirs: '' }, g.get(PREFS, {}));
   const sendInit = () => { post({ type: 'init', prefs: Object.assign({}, prefs, g.get(PREFS, {})), context: ctxFor(Object.assign({}, prefs, g.get(PREFS, {})).cwd) }); sendConvs(); };
