@@ -1,16 +1,36 @@
 {
   "name": "api-chat",
   "displayName": "API Chat (Claude CLI on API key)",
+  "description": "Runs the Claude CLI in an editor panel, billed to your own Anthropic API key, with every permission request answered in the panel.",
   "publisher": "tunaria",
   "version": "0.0.1",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/tunaria/api-chat.git" },
   "engines": { "vscode": "^1.80.0" },
   "main": "./extension.js",
+  "files": ["extension.js", "permission-mcp.js", "media/", "LICENSE", "README.md"],
   "activationEvents": [],
   "contributes": {
     "commands": [
       { "command": "apiChat.open", "title": "API Chat: Open" },
       { "command": "apiChat.setKey", "title": "API Chat: Set API Key" },
       { "command": "apiChat.clearKey", "title": "API Chat: Clear API Key" }
-    ]
+    ],
+    "configuration": {
+      "title": "API Chat",
+      "properties": {
+        "apiChat.claudePath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Full path to the `claude` executable. Checked first; when empty, the Claude Code extension's bundled CLI, then `~/.local/bin`, then `claude` on PATH are used."
+        },
+        "apiChat.backgroundWaitCeilingMs": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "markdownDescription": "How long (ms) a print-mode run waits for background tasks (subagents, long commands) before exiting. `0` = no ceiling: wait however long they take. Sets `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` for the CLI."
+        }
+      }
+    }
   }
 }
