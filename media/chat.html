@@ -1,7 +1,8 @@
 <!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{CSP_SOURCE}} data:; style-src 'nonce-{{NONCE}}'; script-src 'nonce-{{NONCE}}';">
+<style nonce="{{NONCE}}">
   * { box-sizing: border-box; }
   body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; display: flex; flex-direction: column; height: 100vh; }
   .bar { display: flex; gap: 6px; padding: 6px; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--vscode-panel-border); }
@@ -37,6 +38,11 @@
   button.sec:hover { background: var(--vscode-button-secondaryHoverBackground); }
   .copy { float: right; font-size: 0.75em; padding: 1px 6px; margin-left: 6px; }
   button:disabled { opacity: 0.5; cursor: default; }
+  .col { display: flex; flex-direction: column; gap: 6px; }
+  #allows { font-size: 0.85em; gap: 4px; }
+  #allows[hidden] { display: none; }
+  .chip { display: inline-flex; gap: 4px; align-items: center; padding: 1px 4px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; font-family: var(--vscode-editor-font-family); }
+  .chip button { padding: 0 5px; }
 </style></head>
 <body>
 <div class="bar">
@@ -69,6 +75,7 @@
   <input id="cwd" title="Working folder" placeholder="Working folder">
   <input id="extra" title="Extra folders the agent may use (semicolon-separated)" placeholder="Extra folders (a;b)">
 </div>
+<div class="bar" id="allows" hidden></div>
 <details id="ctxBox">
   <summary>Context for this folder</summary>
   <textarea id="ctx" placeholder="Added to the system prompt for every run in this folder"></textarea>
@@ -78,9 +85,9 @@
 <div id="asks"></div>
 <div id="in">
   <textarea id="text" placeholder="Prompt (Ctrl+Enter to send)"></textarea>
-  <div style="display:flex;flex-direction:column;gap:6px"><button id="send">Send</button><button id="stop" class="sec" disabled>Stop</button></div>
+  <div class="col"><button id="send">Send</button><button id="stop" class="sec" disabled>Stop</button></div>
 </div>
-<script>
+<script nonce="{{NONCE}}">
   const vs = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
   const scroll = () => { $('log').scrollTop = 1e9; };
@@ -118,12 +125,25 @@
     const answer = (decision, label) => { vs.postMessage({ type: 'answer', id: m.id, decision }); d.remove(); add('sys', label + ': ' + m.tool + (m.prefix ? ' ' + m.prefix : '')); };
     const opts = [['Allow', 'allow', '']];
     if (m.shell) { if (m.prefix) opts.push(['Always allow `' + m.prefix + '`', 'prefix', 'sec']); }
-    else opts.push(['Always allow ' + m.tool, 'always', 'sec']);
+    else if (m.always) opts.push(['Always allow ' + m.tool, 'always', 'sec']);
     opts.push(['Deny', 'deny', 'sec']);
     for (const [label, dec, cls] of opts) {
       const btn = document.createElement('button'); btn.textContent = label; if (cls) btn.className = cls; btn.onclick = () => answer(dec, label); b.appendChild(btn);
     }
     scroll();
+  }
+  // active "Always" allows and saved shell prefixes for this conversation, each removable
+  function allows(m) {
+    const box = $('allows'); box.textContent = '';
+    const items = m.tools.map((t) => ({ label: t, msg: { tool: t } })).concat(m.prefixes.map((x) => ({ label: x, msg: { prefix: x } })));
+    box.hidden = !items.length; if (!items.length) return;
+    const h = document.createElement('span'); h.textContent = 'Always allowed:'; box.appendChild(h);
+    for (const it of items) {
+      const c = document.createElement('span'); c.className = 'chip'; c.textContent = it.label;
+      const x = document.createElement('button'); x.className = 'sec'; x.textContent = '×'; x.title = 'Remove';
+      x.onclick = () => vs.postMessage(Object.assign({ type: 'removeAllow' }, it.msg));
+      c.appendChild(x); box.appendChild(c);
+    }
   }
   function convs(list, current) {
     const s = $('conv'); s.textContent = '';
@@ -157,6 +177,7 @@
       $('cwd').value = p.cwd; $('extra').value = p.extraDirs || ''; setCtx(m.context);
     }
     else if (m.type === 'convs') convs(m.list, m.current);
+    else if (m.type === 'allows') allows(m);
     else if (m.type === 'context') setCtx(m.text);
     else if (m.type === 'resumed') { if (m.cwd) $('cwd').value = m.cwd; if (m.model) $('model').value = m.model; setCtx(m.context); savePrefs(); }
     else if (m.type === 'clear') $('log').textContent = '';

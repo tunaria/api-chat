@@ -25,9 +25,18 @@ function insideRoots(p, roots) {
 const CHAIN = /[;&|<>`(){}$@]/;
 const LAUNCHERS = new Set(['bash','sh','zsh','cmd','cmd.exe','powershell','powershell.exe','pwsh','pwsh.exe','node','python','python3','py','perl','ruby','iex','invoke-expression','env','xargs','sudo','start','start-process','wsl','git-bash']);
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const MODES = new Set(['default', 'acceptEdits', 'plan']);
+// tools that never get an "Always allow": each call changes files or reaches the network
+const NO_ALWAYS = new Set([...EDIT_TOOLS, 'WebFetch', 'WebSearch']);
+const cfg = () => vscode.workspace.getConfiguration('apiChat');
+const redactor = (key) => (t) => (key ? String(t).split(key).join('[redacted]') : String(t));
+// CLI project folder name for a working folder (~/.claude/projects/<slug>)
+const slugOf = (cwd) => String(cwd || '').replace(/[^A-Za-z0-9]/g, '-');
 
 function findClaude() {
-  const roots = ['.antigravity-ide', '.vscode', '.cursor'].map((d) => path.join(os.homedir(), d, 'extensions'));
+  const custom = String(cfg().get('claudePath') || '').trim();
+  if (custom) return custom;
+  const roots = ['.antigravity-ide', '.vscode', '.vscode-insiders', '.cursor'].map((d) => path.join(os.homedir(), d, 'extensions'));
   const hits = [];
   for (const r of roots) {
     let dirs = [];
@@ -39,7 +48,9 @@ function findClaude() {
     }
   }
   hits.sort((a, b) => b.mtime - a.mtime);
-  return hits.length ? hits[0].exe : 'claude';
+  if (hits.length) return hits[0].exe;
+  const local = path.join(os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
+  return fs.existsSync(local) ? local : 'claude';
 }
 
 async function getKey(ctx, ask) {
@@ -76,7 +87,7 @@ const prefixMatches = (cmd, prefix) => { const w = simpleWords(cmd); const p = S
 // CLI transcript lookup: ~/.claude/projects/<slug>/<id>.jsonl
 function findTranscript(cwd, id) {
   const base = path.join(os.homedir(), '.claude', 'projects');
-  const direct = path.join(base, String(cwd || '').replace(/[^A-Za-z0-9]/g, '-'), id + '.jsonl');
+  const direct = path.join(base, slugOf(cwd), id + '.jsonl');
   if (fs.existsSync(direct)) return direct;
   let dirs = [];
   try { dirs = fs.readdirSync(base); } catch { return null; }
@@ -109,7 +120,9 @@ function readHistory(file) {
 function openPanel(ctx) {
   const g = ctx.globalState;
   const panel = vscode.window.createWebviewPanel('apiChat', 'API Chat', vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
-  panel.webview.html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'chat.html'), 'utf8');
+  const nonce = crypto.randomBytes(16).toString('base64');
+  panel.webview.html = fs.readFileSync(path.join(ctx.extensionPath, 'media', 'chat.html'), 'utf8')
+    .split('{{CSP_SOURCE}}').join(panel.webview.cspSource).split('{{NONCE}}').join(nonce);
   const ws = vscode.workspace.workspaceFolders;
   let sessionId = null, proc = null, spent = 0;
   const post = (m) => panel.webview.postMessage(m);
@@ -120,12 +133,13 @@ function openPanel(ctx) {
   const ctxFor = (cwd) => (g.get(CTX, {})[cwd] || '');
 
   // Pick up print-mode (sdk-cli) sessions the CLI saved on disk that the list doesn't know about,
-  // e.g. runs from before an extension reload. Only reads the first 256 KB of recent transcripts.
+  // e.g. runs from before an extension reload. Only the workspace folders' own projects are read,
+  // and only the first 256 KB of recent transcripts.
   function importTranscripts() {
     const root = path.join(os.homedir(), '.claude', 'projects');
     const known = new Set(convs().map((c) => c.id)), found = [];
     const cutoff = Date.now() - 30 * 86400000;
-    let dirs = []; try { dirs = fs.readdirSync(root); } catch { return; }
+    const dirs = [...new Set((ws || []).map((f) => slugOf(f.uri.fsPath)))];
     for (const d of dirs) {
       let files = []; try { files = fs.readdirSync(path.join(root, d)); } catch { continue; }
       for (const f of files) {
@@ -169,13 +183,16 @@ function openPanel(ctx) {
   const alwaysAllow = new Set();   // non-shell tool names approved for this conversation
   let prefixes = new Set();        // shell command prefixes approved for this conversation
   const subTools = new Set(); // tool_use ids issued inside a subagent
+  const sendAllows = () => post({ type: 'allows', tools: [...alwaysAllow], prefixes: [...prefixes] });
   const persistPrefixes = () => {
     if (!sessionId) return;
     const list = convs(); const c = list.find((x) => x.id === sessionId);
     if (c) { c.prefixes = [...prefixes]; saveConvs(list); }
   };
   const server = http.createServer((req, res) => {
-    if (req.method !== 'POST' || req.url !== '/ask' || req.headers['x-token'] !== token) { res.statusCode = 403; return res.end(); }
+    if (req.method !== 'POST' || req.url !== '/ask' || req.headers['x-token'] !== token) {
+      res.statusCode = 403; return res.end(JSON.stringify({ behavior: 'deny', message: 'Permission request rejected.' }));
+    }
     let s = '';
     req.on('data', (d) => (s += d));
     req.on('end', () => {
@@ -188,31 +205,39 @@ function openPanel(ctx) {
       if (!isShell && alwaysAllow.has(a.tool_name)) return reply('allow');
       // honor the panel's own settings when the CLI still asks (e.g. a path outside its folders)
       const fp = a.input && (a.input.file_path || a.input.notebook_path || a.input.path);
-      if (run.autoReads && READ_TOOLS.includes(a.tool_name)) return reply('allow');
+      // reads are auto-allowed only inside the working and extra folders (no path = the working folder)
+      const inRoots = (x) => x === undefined || x === '' || (typeof x === 'string' && insideRoots(path.resolve(run.roots[0] || '', x), run.roots));
+      if (run.autoReads && READ_TOOLS.includes(a.tool_name) && (a.tool_name === 'TodoWrite' || inRoots(fp))) return reply('allow');
       if (run.mode === 'acceptEdits' && EDIT_TOOLS.has(a.tool_name) && typeof fp === 'string' && insideRoots(fp, run.roots)) return reply('allow');
       if (isShell) for (const p of prefixes) if (prefixMatches(cmd, p)) return reply('allow');
       const prefix = isShell ? shellPrefix(cmd) : null;
       const id = crypto.randomBytes(8).toString('hex');
       pending.set(id, (decision) => {
-        if (decision === 'always' && !isShell) alwaysAllow.add(a.tool_name);
-        if (decision === 'prefix' && prefix) { prefixes.add(prefix); persistPrefixes(); }
+        if (decision === 'always' && !isShell && !NO_ALWAYS.has(a.tool_name)) { alwaysAllow.add(a.tool_name); sendAllows(); }
+        if (decision === 'prefix' && prefix) { prefixes.add(prefix); persistPrefixes(); sendAllows(); }
         reply(decision === 'deny' ? 'deny' : 'allow');
       });
-      post({ type: 'ask', id, tool: a.tool_name, shell: isShell, prefix, sub: subTools.has(a.tool_use_id), input: JSON.stringify(a.input, null, 2).slice(0, 4000) });
+      post({ type: 'ask', id, tool: a.tool_name, shell: isShell, prefix, always: !isShell && !NO_ALWAYS.has(a.tool_name), sub: subTools.has(a.tool_use_id), input: JSON.stringify(a.input, null, 2).slice(0, 4000) });
     });
   });
   server.listen(0, '127.0.0.1');
 
-  const mcpFile = path.join(ctx.globalStorageUri.fsPath, 'mcp.json');
+  // one permission config per panel: it carries this panel's port and token
+  const mcpFile = path.join(ctx.globalStorageUri.fsPath, 'mcp-' + crypto.randomBytes(6).toString('hex') + '.json');
   fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
 
   const denyAll = () => { for (const f of pending.values()) f('deny'); pending.clear(); };
-  const resetConv = () => { sessionId = null; panel.title = 'API Chat'; alwaysAllow.clear(); prefixes = new Set(); subTools.clear(); };
+  const resetConv = () => { sessionId = null; panel.title = 'API Chat'; alwaysAllow.clear(); prefixes = new Set(); subTools.clear(); sendAllows(); };
   const busyMsg = () => post({ type: 'sys', text: 'Still running; press Stop first.' });
 
   panel.webview.onDidReceiveMessage(async (m) => {
     if (m.type === 'answer') { const f = pending.get(m.id); if (f) { pending.delete(m.id); f(m.decision); } return; }
-    if (m.type === 'ready') { sendInit(); return; }
+    if (m.type === 'ready') { sendInit(); sendAllows(); return; }
+    if (m.type === 'removeAllow') {
+      if (m.tool) alwaysAllow.delete(m.tool);
+      if (m.prefix) { prefixes.delete(m.prefix); persistPrefixes(); }
+      sendAllows(); return;
+    }
     if (m.type === 'stop') { denyAll(); if (proc) proc.kill(); return; }
     if (m.type === 'prefs') { await g.update(PREFS, Object.assign({}, g.get(PREFS, {}), m.prefs)); return; }
     if (m.type === 'getContext') { post({ type: 'context', text: ctxFor(m.cwd) }); return; }
@@ -225,7 +250,7 @@ function openPanel(ctx) {
     if (m.type === 'pick') {
       if (proc) return busyMsg();
       const c = convs().find((x) => x.id === m.id); if (!c) return;
-      resetConv(); sessionId = c.id; prefixes = new Set(c.prefixes || []);
+      resetConv(); sessionId = c.id; prefixes = new Set(c.prefixes || []); sendAllows();
       post({ type: 'clear' });
       const f = findTranscript(c.cwd, c.id);
       if (!f) post({ type: 'sys', text: 'Transcript not found; the conversation will still resume.' });
@@ -251,10 +276,12 @@ function openPanel(ctx) {
       env: { ELECTRON_RUN_AS_NODE: '1', API_CHAT_PORT: String(server.address().port), API_CHAT_TOKEN: token },
     } } }));
 
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', m.model, '--permission-mode', m.mode,
+    const mode = MODES.has(m.mode) ? m.mode : 'default';
+    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--model', m.model, '--permission-mode', mode,
       '--mcp-config', mcpFile, '--permission-prompt-tool', 'mcp__apichat__approve'];
     if (EFFORTS.has(m.effort)) args.push('--effort', m.effort);
-    if (m.autoReads) args.push('--allowedTools', READ_TOOLS.join(','));
+    // no --allowedTools for reads: the CLI would then allow them on any path. Reads it asks about go
+    // through the bridge, which allows them only inside the working and extra folders.
     const READ_HINT = 'Reading files is pre-approved only through the Read, Glob and Grep tools. Use them for every '
       + 'look at files or folders (listing, viewing, searching), including in subagents. Do not use Bash or PowerShell '
       + 'for ls, cat, head, find, grep, dir or Get-Content: each shell command needs the person to approve it.';
@@ -262,15 +289,23 @@ function openPanel(ctx) {
     if (context) args.push('--append-system-prompt', context);
     for (const d of String(m.extraDirs || '').split(';').map((x) => x.trim()).filter(Boolean)) args.push('--add-dir', d);
     if (sessionId) args.push('--resume', sessionId);
-    // wait for background tasks (subagents, long commands) however long they take: print mode
-    // otherwise exits at its wait ceiling and the run stops partway, wasting what it spent
-    const env = { ...process.env, ANTHROPIC_API_KEY: key, CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0' };
+    // wait for background tasks (subagents, long commands) up to apiChat.backgroundWaitCeilingMs;
+    // the default 0 means however long they take, so print mode doesn't exit and stop the run partway
+    const ceiling = Number(cfg().get('backgroundWaitCeilingMs', 0));
+    const env = { ...process.env, ANTHROPIC_API_KEY: key,
+      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(Number.isFinite(ceiling) && ceiling > 0 ? Math.floor(ceiling) : 0) };
+    const redact = redactor(key);
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
     const firstPrompt = m.text, runCwd = m.cwd, runModel = m.model;
-    run = { mode: m.mode, autoReads: !!m.autoReads,
+    run = { mode, autoReads: !!m.autoReads,
       roots: [m.cwd, ...String(m.extraDirs || '').split(';').map((x) => x.trim()).filter(Boolean)] };
-    try { proc = cp.spawn(findClaude(), args, { cwd: runCwd, env, windowsHide: true }); }
-    catch (e) { proc = null; post({ type: 'err', text: String(e) }); return; }
+    const exe = findClaude();
+    const spawnErr = (e) => (e && e.code === 'ENOENT'
+      ? `Claude CLI not found (${exe}). Install the Claude Code extension or the claude CLI, or set apiChat.claudePath to the claude executable.`
+      : redact(e));
+    try { proc = cp.spawn(exe, args, { cwd: runCwd, env, windowsHide: true }); }
+    catch (e) { proc = null; post({ type: 'err', text: spawnErr(e) }); return; }
+    proc.stdin.on('error', () => {}); // ENOENT also surfaces here; reported by proc 'error'
     proc.stdin.end(m.ultracode ? 'ultracode: ' + m.text : m.text);
     post({ type: 'busy', on: true });
 
@@ -284,7 +319,7 @@ function openPanel(ctx) {
 
     let buf = '', registered = false, runResult = null;
     proc.stdout.on('data', (d) => {
-      buf += d.toString();
+      buf += redact(d.toString());
       let i;
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
@@ -306,7 +341,7 @@ function openPanel(ctx) {
         }
       }
     });
-    proc.stderr.on('data', (d) => post({ type: 'err', text: d.toString().split(key).join('[redacted]') }));
+    proc.stderr.on('data', (d) => post({ type: 'err', text: redact(d.toString()) }));
     proc.on('close', () => {
       proc = null; denyAll();
       if (runResult) {
@@ -317,9 +352,9 @@ function openPanel(ctx) {
       }
       post({ type: 'busy', on: false });
     });
-    proc.on('error', (e) => { proc = null; post({ type: 'err', text: String(e) }); post({ type: 'busy', on: false }); });
+    proc.on('error', (e) => { proc = null; post({ type: 'err', text: spawnErr(e) }); post({ type: 'busy', on: false }); });
   });
-  panel.onDidDispose(() => { denyAll(); if (proc) proc.kill(); server.close(); });
+  panel.onDidDispose(() => { denyAll(); if (proc) proc.kill(); server.close(); try { fs.unlinkSync(mcpFile); } catch { /* never written */ } });
 }
 
 module.exports = { activate, deactivate() {} };
